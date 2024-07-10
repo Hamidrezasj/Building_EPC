@@ -20,7 +20,7 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 
 #Calling preprocessed data frame
-file_path = r'D:\PhD-UWL\codes\main\epc-model.csv'
+file_path = r'epc-model.csv'
 df = pd.read_csv(file_path)
 
 X = df.drop(['ENERGY_CONSUMPTION_CURRENT', 'CURRENT_ENERGY_RATING'], axis=1)
@@ -36,7 +36,7 @@ if menu=="Home":
                  label based on their features. Additionally, it can estimate the cost of various retrofits and analyze their impact on energy performance and EPC ratings. 
                  The model has been developed using the Energy Performance Certificate dataset for residential buildings in the UK, published by the Department for Levelling Up, 
                  Housing and Communities. </p> """, unsafe_allow_html=True)
-     st.image("D:\PhD-UWL\codes\main\hr_image.jpeg", width=600)
+     st.image("hr_image.jpeg", width=600)
 
 
 if menu=="predictions":
@@ -555,7 +555,7 @@ if menu=="predictions":
 
 
 
-    image_path="D:\PhD-UWL\codes\main\epc1.jpeg"
+    #image_path="D:\PhD-UWL\codes\main\epc1.jpeg"
 
     #triggering prediction
     col1, col2, col3=st.columns(3)
@@ -566,17 +566,17 @@ if menu=="predictions":
     
     if col1.button("predict EPC rating"):
          if y_pred_epc==0:
-              col1.image("D:\PhD-UWL\codes\main\epc-b.jpg",width=400)
+              col1.image("epc-b.jpg",width=400)
          elif y_pred_epc==1:
-              col1.image("D:\PhD-UWL\codes\main\epc-c.jpg",width=400)
+              col1.image("epc-c.jpg",width=400)
          elif y_pred_epc==2:
-              col1.image("D:\PhD-UWL\codes\main\epc-d.jpg",width=400)
+              col1.image("epc-d.jpg",width=400)
          elif y_pred_epc==3: 
-              col1.image("D:\PhD-UWL\codes\main\epc-e.jpg",width=400)
+              col1.image("epc-e.jpg",width=400)
          elif y_pred_epc==4:
-              col1.image("D:\PhD-UWL\codes\main\epc-f.jpg",width=400)
+              col1.image("epc-f.jpg",width=400)
          elif y_pred_epc==5:
-              col1.image("D:\PhD-UWL\codes\main\epc-g.jpg",width=400)
+              col1.image("epc-g.jpg",width=400)
      
 ####################################################################################################################################################################
 
