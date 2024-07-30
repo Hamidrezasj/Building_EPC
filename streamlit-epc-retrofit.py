@@ -15,6 +15,15 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
+import time 
+
 
 
 
@@ -45,7 +54,7 @@ if menu=="predictions":
     selected_property_type = st.selectbox("Select Property Type:", categories_property_types)
 
     categories_built_form = X['BUILT_FORM'].unique()
-    selected_built_form = st.selectbox("Select built form:" , categories_built_form )
+    selected_built_form = st.selectbox("Select built form:" , categories_built_form, help= 'mid-terrace has external walls on two opposite sides; enclosed mid terrace has an external wall on one side only; end-terrace has three external walls; enclosed end-terrace has two adjacent external walls.' )
 
     selected_floor_area=st.number_input("Please enter floor area of the property? (between 20 and 500 sqm)", min_value=20, max_value=500)
 
@@ -453,7 +462,9 @@ if menu=="predictions":
     categories_solar_hotwater=X['SOLAR_WATER_HEATING_FLAG'].unique()
     selected_solar_hotwater=st.selectbox('whether the hotwater in the Property is from solar', categories_solar_hotwater)
     
-    installed_capacity_pv=st.number_input('Please enter installed photovoltaic capacity (KW)', min_value=0.00 , max_value=50.00)
+    max_pv=float(round(0.12*(selected_floor_area/2)*(1/0.819),1))
+    st.session_state['max_pv']=max_pv
+    installed_capacity_pv=st.number_input('Please enter installed photovoltaic capacity (KW)', min_value=0.00 , max_value=max_pv)
     pv_area=installed_capacity_pv*8.333
     roof_area=1
     if selected_roof_type=='Pitched Roof' and selected_property_type in ['House','Bungalow']:
@@ -464,6 +475,9 @@ if menu=="predictions":
          pv_area=0
      
     selected_pv_supply=(pv_area/roof_area)*100
+
+    st.session_state['roof_area']=roof_area
+    st.session_state['installed_pv']=installed_capacity_pv
 
     
     
@@ -546,11 +560,29 @@ if menu=="predictions":
     model=XGBmodel(X_encoded_scaled_train,Y_energy_train)
     model_epc=XGBmodel_epc(X_encoded_scaled_train,Y_epc_encoded_train)
 
+    st.session_state['ml_model']=model
+    st.session_state['ml_model_epc']=model_epc
+    st.session_state['encoding']=my_case_study_encoded_scaled
+
 
     #predictions
-    y_predicted_XGB=model.predict(my_case_study_encoded_scaled)
+    y_predicted_energy=model.predict(my_case_study_encoded_scaled)
     y_pred_XGB=model.predict(X_encoded_scaled_test)
     y_pred_epc=model_epc.predict(my_case_study_encoded_scaled)
+
+    epc_mapping={
+          0:'B',
+          1:'C',
+          2:'D',
+          3:'E',
+          4:'F',
+          5:'G'
+    }
+
+
+    st.session_state['predicted_energy_consumption']=y_predicted_energy
+    st.session_state['predicted_epc']=epc_mapping[int(y_pred_epc)]
+
 
 
 
@@ -560,7 +592,7 @@ if menu=="predictions":
     col1, col2, col3=st.columns(3)
 
     if col3.button("predict annual energy consumption"):
-            col3.write(f"**annual energy consumption is estimated {int(y_predicted_XGB)}** (KWh/sqm)")
+            col3.write(f"**annual energy consumption is estimated {int(y_predicted_energy)}** (KWh/sqm)")
      
     
     if col1.button("predict EPC rating"):
@@ -576,6 +608,9 @@ if menu=="predictions":
               col1.image("epc-f.jpg",width=400)
          elif y_pred_epc==5:
               col1.image("epc-g.jpg",width=400)
+     
+
+    
      
 ####################################################################################################################################################################
 
@@ -593,10 +628,21 @@ if menu=='Retrofit':
      glazing_area=st.session_state['glazing']
      wall_type= st.session_state['wall_type']
      wall_insulation=st.session_state['wall_insulation']
+     model_energy_retrofit=st.session_state['ml_model']
+     model_epc_retrofit=st.session_state['ml_model_epc']
+     my_case_study_encoded_scaled=st.session_state['encoding']
+     max_pv=st.session_state['max_pv']
+     roof_area=st.session_state['roof_area']
+     installed_capacity_pv=st.session_state['installed_pv']
+     y_predicted_energy=st.session_state['predicted_energy_consumption']
+     y_predicted_epc=st.session_state['predicted_epc']
+
+     my_case_study_retrofitted=my_case_study.copy()
+
      col1,col2=st.columns(2)
      col1.write('__1-Externall wall retrofit__')
 
-     #Retrofit prices
+     #Retrofit prices    #Retrofit prices    #Retrofit prices               #Retrofit prices            #Retrofit prices             #Retrofit prices           #Retrofit prices
      wall_insulation_50mm=90            #GBP
      wall_insulation_100mm=110          #GBP
      wall_insulation_150mm=130          #GBP
@@ -611,6 +657,72 @@ if menu=='Retrofit':
      roof_insulation_100mm=25           #GBP
      roof_insulation_200mm=35           #GBP
 
+     #ASHP quote      #ASHP quote           #ASHP quote           #ASHP quote           #ASHP quote          #ASHP quote          #ASHP quote            #ASHP quote          #ASHP quote
+
+     @st.cache_resource
+     def ashp_quote(quote_features):
+          PATH = "chromedriver.exe"
+
+          chrome_options= webdriver.ChromeOptions()
+          chrome_options.add_argument("--headless")
+
+
+          driver=webdriver.Chrome(options=chrome_options)
+          driver.get('http://asf-hp-cost-demo-l-b-1046547218.eu-west-1.elb.amazonaws.com/')
+
+          drop_down_1= Select(driver.find_element(By.NAME,"region"),)
+          drop_down_1.select_by_visible_text(quote_features['region'])
+
+          drop_down_2= Select(driver.find_element(By.NAME,"premisesInfo.type"),)
+          drop_down_2.select_by_visible_text(quote_features['premises_type'])
+
+          drop_down_3= Select(driver.find_element(By.NAME,"premisesInfo.builtForm"),)
+          drop_down_3.select_by_visible_text(quote_features['built_form'])
+
+          drop_down_3= Select(driver.find_element(By.NAME,"premisesInfo.ageBand"),)
+          drop_down_3.select_by_visible_text(quote_features['age_band'])
+
+          input_1=driver.find_element(By.NAME,"premisesInfo.numRooms")
+          input_1.send_keys(quote_features['num_rooms'])
+
+          input_2=driver.find_element(By.NAME,"premisesInfo.floorArea")
+          input_2.send_keys(quote_features['floor_area'])
+
+          submit=driver.find_element(By.XPATH,"//button[normalize-space()='Submit']")
+          submit.click()
+
+          waiter=WebDriverWait(driver,10)
+          waiter.until(EC.presence_of_element_located((By.CSS_SELECTOR,"body > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > span:nth-child(5) > span:nth-child(6)")))
+
+          cost_text=driver.find_element(By.CSS_SELECTOR,"body > div:nth-child(2) > div:nth-child(3) > div:nth-child(3) > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > span:nth-child(5) > span:nth-child(6)")
+          cost_str=str(cost_text.text)
+          cost_str=cost_str.replace(',','')
+          cost_str=cost_str.replace('£','')
+          cost_int=int(cost_str)
+          cost_int_updated=1.20*cost_int
+
+          return cost_int_updated
+     
+
+     floor_area=str(my_case_study['TOTAL_FLOOR_AREA'].iloc[0])
+     num_rooms=round((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/40)+1
+     num_rooms=str(num_rooms)
+     quote_features={
+          'region':'London',
+          'premises_type': 'House',
+          'built_form': 'Detached',
+          'age_band': '1930-1965',
+          'num_rooms': num_rooms,
+          'floor_area': floor_area
+     }
+
+     ashp_price_quote=ashp_quote(quote_features)
+
+     
+     df_wall_u_value=pd.read_csv(r'wall-u-value.csv')
+     df_wall_u_value.set_index('Unnamed: 0',inplace=True)
+
+
      if wall_type=='Solid brick' and wall_insulation=='As built':
      
           wall_option= col1.radio("Choose the external wall insulation:", ('50mm insulation for external wall', '100mm insulation for external wall', '150mm insulation for external wall',
@@ -618,12 +730,15 @@ if menu=='Retrofit':
           if wall_option=='50mm insulation for external wall':
                retrofit_cost=int(wall_insulation_50mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['solid brick- 50mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='100mm insulation for external wall':
                retrofit_cost=int(wall_insulation_100mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['solid brick- 100mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='150mm insulation for external wall':
                retrofit_cost=int(wall_insulation_150mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['solid brick- 150mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='No retrofit is required':
                retrofit_cost=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
@@ -633,9 +748,11 @@ if menu=='Retrofit':
           if wall_option=='100mm insulation for external wall':
                retrofit_cost=int(wall_insulation_100mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['solid brick- 100mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='150mm insulation for external wall':
                retrofit_cost=int(wall_insulation_150mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['solid brick- 150mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='No retrofit is required':
                retrofit_cost=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
@@ -645,6 +762,7 @@ if menu=='Retrofit':
           if wall_option=='150mm insulation for external wall':
                retrofit_cost=int(wall_insulation_150mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['solid brick- 150mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='No retrofit is required':
                retrofit_cost=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
@@ -661,6 +779,7 @@ if menu=='Retrofit':
           if wall_option=='50mm insulation for external wall':
                retrofit_cost=int(wall_insulation_50mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['timber frame- internal insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='No retrofit is required':
                retrofit_cost=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
@@ -677,18 +796,23 @@ if menu=='Retrofit':
           if wall_option=='50mm insulation for external wall':
                retrofit_cost=int(wall_insulation_50mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['unfilled cavity- 50mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='100mm insulation for external wall':
                retrofit_cost=int(wall_insulation_100mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['unfilled cavity- 100mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='Filling cavity':
                retrofit_cost=int(cavity_filling*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['filled cavity',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='Filling cavity and 50mm insulation':
                retrofit_cost=int(cavity_filling*external_wall_area)+int(wall_insulation_50mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['filled cavity- 50mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='Filling cavity and 100mm insulation':
                retrofit_cost=int(cavity_filling*external_wall_area)+int(wall_insulation_100mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['filled cavity- 100mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='No retrofit is required':
                retrofit_cost=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
@@ -698,12 +822,15 @@ if menu=='Retrofit':
           if wall_option=='100mm insulation for external wall':
                retrofit_cost=int(wall_insulation_100mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['unfilled cavity- 100mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='Filling cavity':
                retrofit_cost=int(cavity_filling*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['filled cavity- 50mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='Filling cavity and 100mm insulation':
                retrofit_cost=int(cavity_filling*external_wall_area)+int(wall_insulation_100mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['filled cavity- 100mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='No retrofit is required':
                retrofit_cost=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
@@ -713,6 +840,7 @@ if menu=='Retrofit':
           if wall_option=='Filling cavity':
                retrofit_cost=int(cavity_filling*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['filled cavity- 100mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='No retrofit is required':
                retrofit_cost=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
@@ -722,9 +850,11 @@ if menu=='Retrofit':
           if wall_option=='50mm insulation for external wall':
                retrofit_cost=int(wall_insulation_50mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['filled cavity- 50mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='100mm insulation for external wall':
                retrofit_cost=int(wall_insulation_100mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['filled cavity- 100mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='No retrofit is required':
                retrofit_cost=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
@@ -734,6 +864,7 @@ if menu=='Retrofit':
           if wall_option=='100mm insulation for external wall':
                retrofit_cost=int(wall_insulation_100mm*external_wall_area)
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
+               my_case_study_retrofitted['WALLS_U_VALUE']=df_wall_u_value.loc['filled cavity- 100mm insulation',my_case_study['CONSTRUCTION_AGE_BAND'].iloc[0]]
           elif wall_option=='No retrofit is required':
                retrofit_cost=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost} GBP**')
@@ -753,9 +884,11 @@ if menu=='Retrofit':
           if glazing_option=='Double glazing':
                retrofit_cost_2=int(glazing_area*double_glazed_window)
                col2.write(f'**estimated retrofit cost is {retrofit_cost_2} GBP**')
+               my_case_study_retrofitted['GLAZED_TYPE']='Double glazing'
           elif glazing_option=='Triple glazing':
                retrofit_cost_2=int(glazing_area*triple_glazed_window)
                col2.write(f'**estimated retrofit cost is {retrofit_cost_2} GBP**')
+               my_case_study_retrofitted['GLAZED_TYPE']='Triple glazing'
           elif glazing_option=='No retrofit is required':
                retrofit_cost_2=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost_2} GBP**')
@@ -781,6 +914,7 @@ if menu=='Retrofit':
           if floor_option=='50mm insulation for floor':
               retrofit_cost_3=(my_case_study['TOTAL_FLOOR_AREA'].iloc[0])*suspended_floor_insulation
               col2.write(f'**estimated retrofit cost is {retrofit_cost_3} GBP**')
+              my_case_study_retrofitted['FLOOR_INSULATION']='Insulated-at least 50mm insulation'
           elif floor_option=='No retrofit is required':
                retrofit_cost_3=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost_3} GBP**')
@@ -789,6 +923,7 @@ if menu=='Retrofit':
           if floor_option=='50mm insulation for floor':
               retrofit_cost_3=(my_case_study['TOTAL_FLOOR_AREA'].iloc[0])*solid_floor_insulation
               col2.write(f'**estimated retrofit cost is {retrofit_cost_3} GBP**')
+              my_case_study_retrofitted['FLOOR_INSULATION']='Insulated-at least 50mm insulation'
           elif floor_option=='No retrofit is required':
                retrofit_cost_3=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost_3} GBP**')
@@ -808,15 +943,19 @@ if menu=='Retrofit':
           if roof_option=='25mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_25mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='less than 50mm loft insulation'
           elif roof_option=='50mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_50mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='50 to 99mm loft insulation'
           elif roof_option=='100mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_100mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='100 to 200mm loft insulation'
           elif roof_option=='200mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_200mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='More than 200mm loft insulation'
           elif roof_option=='No retrofit is required':
                retrofit_cost_4=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
@@ -825,12 +964,15 @@ if menu=='Retrofit':
           if roof_option=='50mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_50mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='50 to 99mm loft insulation'
           elif roof_option=='100mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_100mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='100 to 200mm loft insulation'
           elif roof_option=='200mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_200mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='More than 200mm loft insulation'
           elif roof_option=='No retrofit is required':
                retrofit_cost_4=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
@@ -839,9 +981,11 @@ if menu=='Retrofit':
           if roof_option=='100mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_100mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='100 to 200mm loft insulation'
           elif roof_option=='200mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_200mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='More than 200mm loft insulation'
           elif roof_option=='No retrofit is required':
                retrofit_cost_4=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
@@ -850,6 +994,7 @@ if menu=='Retrofit':
           if roof_option=='200mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_200mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='More than 200mm loft insulation'
           elif roof_option=='No retrofit is required':
                retrofit_cost_4=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
@@ -858,6 +1003,7 @@ if menu=='Retrofit':
           if roof_option=='50mm loft insulation':
                retrofit_cost_4=((my_case_study['TOTAL_FLOOR_AREA'].iloc[0])/2)*roof_insulation_50mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='Insulated-unknown thickness (50mm or more)'
           elif roof_option=='No retrofit is required':
                retrofit_cost_4=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
@@ -868,17 +1014,105 @@ if menu=='Retrofit':
                roof_room_wall=((roof_room_floor*0.3*0.66)**0.5)*8.25
                retrofit_cost_4=(roof_room_floor+roof_room_wall)*roof_insulation_50mm
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4:.2f} GBP**')
+               my_case_study_retrofitted['ROOF_INSULATION']='Insulated-unknown thickness (50mm or more)'
           elif roof_option=='No retrofit is required':
                retrofit_cost_4=0
                col2.write(f'**estimated retrofit cost is {retrofit_cost_4} GBP**')
+
+
+     col1,col2=st.columns(2)
+     col1.write('__5-Heating system retrofit__')
+     if my_case_study['HEATING_SYSTEM'].iloc[0] in ['Boiler system with radiators or underfloor heating','Electric storage system','Electric underfloor heating',
+                                                    'Room heater','Warm air system (not heat pump)']:
+          heating_option=col1.radio('Choose heating system retrofit: ',['Air source heat pump','No retrofit is required'])
+          if heating_option=='Air source heat pump':
+               col2.write(f'Air source heat pump cost (assuming no need of radiator upgrades): {int(ashp_price_quote)} GBP')
+               gov_grant=7500
+               col2.write(f'Boiler upgrade scheme government grant: {gov_grant} GBP')
+               retrofit_cost_5=ashp_price_quote-gov_grant
+               col2.write(f'**Estimated total cost after government grant is {int(retrofit_cost_5)} GBP**')
+               my_case_study_retrofitted['HEATING_SYSTEM'] = 'Air source heat pump with radiators or underfloor heating'
+               
+          elif heating_option=='No retrofit is required':
+               retrofit_cost_5=0
+               col2.write(f'**estimated retrofit cost is {retrofit_cost_5} GBP**')
+
+     elif my_case_study ['HEATING_SYSTEM'].iloc[0] in ['Air source heat pump with radiators or underfloor heating','Air source heat pump with warm air distribution']:
+          col1.write('')
+          col1.write('No retrofit is required')
+          col1.write('')
+          retrofit_cost_5=0
+          col2.write(f'**estimated retrofit cost is {retrofit_cost_5} GBP**')
+     
+
+     st.write('')
+     col1,col2=st.columns(2)
+     col1.write('__6-Adding PV solar to the property__')
+     pv_retrofit=col1.number_input('Please enter required PV capacity (KWp) :', min_value=0.00 , max_value=max_pv-installed_capacity_pv)
+     pv_area_retrofit=pv_retrofit*8.333
+     my_case_study_retrofitted['PHOTO_SUPPLY']=((pv_area_retrofit/roof_area)*100) + my_case_study['PHOTO_SUPPLY'].iloc[0]
+     if pv_retrofit<=4:
+          retrofit_cost_6=pv_retrofit*2393
+     elif 4 < pv_retrofit <= 10:
+          retrofit_cost_6=pv_retrofit*2216
+     elif 10 < pv_retrofit <=50:
+          retrofit_cost_6=pv_retrofit*1502
+
+     
+     col2.write(f'**estimated retrofit cost is {int(retrofit_cost_6)} GBP**')
+     
+
+
+
+
      
 
      st.write('')
      st.write('')
      st.write('')
      st.write('')
-     total_retrofit_cost=retrofit_cost+retrofit_cost_2+retrofit_cost_3+retrofit_cost_4
-     st.write(f'**total retrofit cost equals with {total_retrofit_cost} GBP**')
+     total_retrofit_cost=retrofit_cost+retrofit_cost_2+retrofit_cost_3+retrofit_cost_4+retrofit_cost_5+retrofit_cost_6
+     st.write(f'**Total retrofit cost is {int(total_retrofit_cost)} GBP**')
+
+     st.write('')
+     st.write('')
+
+     categorical_columns= ['PROPERTY_TYPE','BUILT_FORM','GLAZED_TYPE', 'GLAZED_AREA','HOTWATER_DESCRIPTION','SECONDHEAT_DESCRIPTION',
+                          'MAIN_FUEL','MECHANICAL_VENTILATION','CONSTRUCTION_AGE_BAND','HEATING_SYSTEM','SOLAR_WATER_HEATING_FLAG',
+                          'FLOOR_TYPE','FLOOR_INSULATION','ROOF_TYPE','ROOF_INSULATION']  
+     numerical_columns= ['TOTAL_FLOOR_AREA', 'MULTI_GLAZE_PROPORTION','LOW_ENERGY_LIGHTING','FLOOR_HEIGHT','PHOTO_SUPPLY','WALLS_U_VALUE']
+
+     scaler=MinMaxScaler()
+     X_scaled=X.copy()
+     X_scaled[numerical_columns]=scaler.fit_transform(X[numerical_columns])
+     my_case_study_retrofitted_scaled=my_case_study_retrofitted.copy()
+     my_case_study_retrofitted_scaled[numerical_columns]=scaler.transform(my_case_study_retrofitted[numerical_columns])
+
+     my_case_study_retrofitted_encoded_scaled=pd.get_dummies(my_case_study_retrofitted_scaled).reindex( columns=my_case_study_encoded_scaled.columns , fill_value=0)
+
+
+
+     y_pred_epc_retrofitted=model_epc_retrofit.predict(my_case_study_retrofitted_encoded_scaled)
+     y_pred_energy_retrofitted=model_energy_retrofit.predict(my_case_study_retrofitted_encoded_scaled)
+
+     epc_mapping={
+          0:'B',
+          1:'C',
+          2:'D',
+          3:'E',
+          4:'F',
+          5:'G'
+    }
+
+     col1, col2, col3= st.columns(3)
+     if col3.button("predict annual energy consumption"):
+            col3.write(f"annual energy consumption before retrofit was **{int(y_predicted_energy)}** and after retrofit is estimated **{int(y_pred_energy_retrofitted)}** (KWh/sqm)")
+     
+
+     if col1.button('predict EPC rating'):
+          col1.write(f'EPC rating before retrofit was **{y_predicted_epc}** and after retrofit is **{epc_mapping[int(y_pred_epc_retrofitted)]}**')
+
+     
 
 
 
